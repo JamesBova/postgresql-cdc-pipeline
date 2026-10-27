@@ -1,0 +1,74 @@
+
+services:
+  postgres-source:
+    image: postgres:16
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_USER: cdc_user
+      POSTGRES_PASSWORD: ${CDC_DB_PASSWORD:?CDC_DB_PASSWORD is required}
+      POSTGRES_DB: source_db
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "max_wal_senders=10"
+    volumes:
+      - source_data:/var/lib/postgresql/data
+
+  postgres-target:
+    image: postgres:16
+    ports:
+      - "127.0.0.1:55433:5432"
+    environment:
+      POSTGRES_USER: cdc_user
+      POSTGRES_PASSWORD: ${CDC_DB_PASSWORD:?CDC_DB_PASSWORD is required}
+      POSTGRES_DB: target_db
+    volumes:
+      - target_data:/var/lib/postgresql/data
+
+  kafka:
+    image: apache/kafka:3.9.1
+    hostname: kafka
+    ports:
+      - "127.0.0.1:9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  debezium:
+    image: quay.io/debezium/connect:3.3
+    ports:
+      - "127.0.0.1:8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: cdc-connect-cluster
+      CONFIG_STORAGE_TOPIC: cdc_connect_configs
+      OFFSET_STORAGE_TOPIC: cdc_connect_offsets
+      STATUS_STORAGE_TOPIC: cdc_connect_status
+      CDC_DB_PASSWORD: ${CDC_DB_PASSWORD:?CDC_DB_PASSWORD is required}
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+    depends_on:
+      - kafka
+      - postgres-source
+
+
+volumes:
+  source_data:
+  target_data:
+  kafka_data:
